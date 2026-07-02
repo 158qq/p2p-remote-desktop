@@ -3,8 +3,8 @@ using System;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
+using System.Net.Sockets;
 using System.Runtime.InteropServices;
-using UdtSharp;
 using Cryptography;
 
 namespace p2pcopy
@@ -13,8 +13,8 @@ namespace p2pcopy
     {
         #region "declare"
         public static bool isConnected = false;
-        public static UdtSocket client = null;
-        public static UdtNetworkStream netStream;
+        public static TcpClient tcpClient = null;
+        public static NetworkStream netStream;
         public static BinaryWriter swriter;
         static BinaryReader sreader;
         public static Bitmap _decodeBitmap;
@@ -36,17 +36,16 @@ namespace p2pcopy
         #region "recive data <======"
         static internal void Run(Object conn)
         {
-
-            client = (UdtSocket)conn;
-            netStream = new UdtNetworkStream(client); 
-            sreader = new BinaryReader(netStream); 
+            tcpClient = (TcpClient)conn;
+            netStream = tcpClient.GetStream();
+            sreader = new BinaryReader(netStream);
 
             int screenW = GetSystemMetrics(SM_CXSCREEN);
             int screenH = GetSystemMetrics(SM_CYSCREEN);
 
             SendMessage("peer|" + Environment.UserName + "|" + screenW + "|" + screenH);
 
-            while (isConnected && netStream.CanRead) 
+            while (isConnected && netStream.CanRead)
             {
                 try
                 {
@@ -261,7 +260,7 @@ namespace p2pcopy
         {
             try
             {
-                if (isConnected && netStream.CanWrite)
+                if (isConnected && netStream != null && netStream.CanWrite)
                 {
                     // aes 256 bit encode
                     message = aes.Encrypt(message);
@@ -276,6 +275,25 @@ namespace p2pcopy
             }
         }
         #endregion
+
+        /// <summary>
+        /// 发送原始字节数据（用于桌面帧传输）
+        /// </summary>
+        static internal void SendRawBytes(byte[] data)
+        {
+            try
+            {
+                if (isConnected && netStream != null && netStream.CanWrite)
+                {
+                    netStream.Write(data, 0, data.Length);
+                    netStream.Flush();
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("发送数据错误: " + ex.Message);
+            }
+        }
 
     }
 }

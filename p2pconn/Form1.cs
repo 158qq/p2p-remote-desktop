@@ -10,7 +10,6 @@ using System.Net.Sockets;
 using System.Text;
 using System.Windows.Forms;
 using Microsoft.Win32;
-using UdtSharp;
 using p2pcopy;
 
 namespace p2pconn
@@ -42,7 +41,7 @@ namespace p2pconn
         private Button btnP2PListen, btnP2PConnect, btnP2PDisconnect;
         private System.Threading.Thread p2pThread = null;
         private bool p2pConnected = false;
-        private UdtSocket listenSocket = null;
+        private TcpListener tcpListener = null;
         private bool isListening = false;
         #endregion
 
@@ -914,9 +913,9 @@ namespace p2pconn
         }
         #endregion
 
-        #region P2P 局域网直连
+        #region P2P 局域网直连（基于 TCP）
         /// <summary>
-        /// 监听模式：绑定本地端口，等待对端连接
+        /// 监听模式：绑定本地 TCP 端口，等待对端连接
         /// </summary>
         private void BtnP2PListen_Click(object sender, EventArgs e)
         {
@@ -941,9 +940,8 @@ namespace p2pconn
             {
                 try
                 {
-                    listenSocket = new UdtSocket(AddressFamily.InterNetwork, SocketType.Dgram);
-                    listenSocket.Bind(new IPEndPoint(IPAddress.Any, localPort));
-                    listenSocket.Listen(10);
+                    tcpListener = new TcpListener(IPAddress.Any, localPort);
+                    tcpListener.Start();
                     isListening = true;
 
                     this.BeginInvoke(new Action(() =>
@@ -957,8 +955,8 @@ namespace p2pconn
                         statusBarLabel.Text = "P2P: 监听端口 " + localPort;
                     }));
 
-                    // 等待连接
-                    UdtSocket client = listenSocket.Accept();
+                    // 等待对端连接
+                    TcpClient client = tcpListener.AcceptTcpClient();
                     if (client == null || !isListening)
                     {
                         if (client != null) client.Close();
@@ -970,6 +968,9 @@ namespace p2pconn
                 catch (Exception ex)
                 {
                     isListening = false;
+                    try { tcpListener?.Stop(); } catch { }
+                    tcpListener = null;
+
                     this.BeginInvoke(new Action(() =>
                     {
                         lblP2PStatus.Text = "监听失败: " + ex.Message;
@@ -987,7 +988,7 @@ namespace p2pconn
         }
 
         /// <summary>
-        /// 客户端模式：直接连接对端
+        /// 客户端模式：直接 TCP 连接对端
         /// </summary>
         private void BtnP2PConnect_Click(object sender, EventArgs e)
         {
@@ -1031,36 +1032,9 @@ namespace p2pconn
             {
                 try
                 {
-                    var socket = new UdtSocket(AddressFamily.InterNetwork, SocketType.Dgram);
-                    socket.Bind(new IPEndPoint(IPAddress.Any, 0));
-                    socket.Connect(new IPEndPoint(peerIp, peerPort));
-
-                    bool connected = false;
-                    for (int i = 0; i < 50; i++)
-                    {
-                        if (socket.IsConnected())
-                        {
-                            connected = true;
-                            break;
-                        }
-                        System.Threading.Thread.Sleep(100);
-                    }
-
-                    if (!connected)
-                    {
-                        socket.Close();
-                        this.BeginInvoke(new Action(() =>
-                        {
-                            lblP2PStatus.Text = "连接超时";
-                            lblP2PStatus.ForeColor = Color.Red;
-                            btnP2PListen.Enabled = true;
-                            btnP2PConnect.Enabled = true;
-                            statusBarLabel.Text = "P2P: 连接超时";
-                        }));
-                        return;
-                    }
-
-                    OnP2PConnected(socket);
+                    var client = new TcpClient();
+                    client.Connect(peerIp, peerPort);
+                    OnP2PConnected(client);
                 }
                 catch (Exception ex)
                 {
@@ -1078,13 +1052,14 @@ namespace p2pconn
             p2pThread.Start();
         }
 
-        private void OnP2PConnected(UdtSocket socket)
+        private void OnP2PConnected(TcpClient client)
         {
             p2pConnected = true;
             SenderReceiver.isConnected = true;
-            SenderReceiver.client = socket;
+            SenderReceiver.tcpClient = client;
             isListening = false;
-            listenSocket = null;
+            try { tcpListener?.Stop(); } catch { }
+            tcpListener = null;
 
             this.BeginInvoke(new Action(() =>
             {
@@ -1098,17 +1073,14 @@ namespace p2pconn
                 statusBarLabel.Text = "P2P: 已连接到 " + txtPeerAddress.Text;
             }));
 
-            SenderReceiver.Run(socket);
+            SenderReceiver.Run(client);
         }
 
         private void StopListening()
         {
             isListening = false;
-            if (listenSocket != null)
-            {
-                try { listenSocket.Close(); } catch { }
-                listenSocket = null;
-            }
+            try { tcpListener?.Stop(); } catch { }
+            tcpListener = null;
             this.BeginInvoke(new Action(() =>
             {
                 btnP2PListen.Text = "开始监听";
@@ -1129,16 +1101,13 @@ namespace p2pconn
             try
             {
                 SenderReceiver.isConnected = false;
-                if (SenderReceiver.client != null)
+                if (SenderReceiver.tcpClient != null)
                 {
-                    try { SenderReceiver.client.Close(); } catch { }
-                    SenderReceiver.client = null;
+                    try { SenderReceiver.tcpClient.Close(); } catch { }
+                    SenderReceiver.tcpClient = null;
                 }
-                if (listenSocket != null)
-                {
-                    try { listenSocket.Close(); } catch { }
-                    listenSocket = null;
-                }
+                try { tcpListener?.Stop(); } catch { }
+                tcpListener = null;
                 p2pConnected = false;
                 isListening = false;
 

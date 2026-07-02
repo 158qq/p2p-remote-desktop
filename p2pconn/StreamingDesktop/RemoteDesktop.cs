@@ -137,7 +137,7 @@ namespace p2pconn
                     {
                         byte[] tempBytes = QuickLZ.Compress(MotionStream.ToArray(), 3);
                         SenderReceiver.SendMessage("b|" + Tipo + "|" + tempBytes.Length);
-                        SenderReceiver.client.Send(tempBytes, 0, tempBytes.Length);
+                        SenderReceiver.SendRawBytes(tempBytes);
                         Array.Clear(tempBytes, 0, tempBytes.Length);
                     }
                 }
