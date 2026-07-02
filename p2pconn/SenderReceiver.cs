@@ -5,6 +5,7 @@ using System.Drawing;
 using System.IO;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
+using System.Threading;
 using Cryptography;
 
 namespace p2pcopy
@@ -73,6 +74,14 @@ namespace p2pcopy
                                 Logger.LogInfo("已连接 => " + words[1]);
                                 RemoteDesktop.RScreenWidth = int.Parse(words[2]);
                                 RemoteDesktop.RScreenHeight = int.Parse(words[3]);
+
+                                // 服务端（监听方）自动开始共享桌面给客户端
+                                if (GlobalVariables.IsP2PServer)
+                                {
+                                    Thread.Sleep(300); // 等待对端准备就绪
+                                    RemoteDesktop.StartDesktop();
+                                    Logger.LogInfo("P2P 服务端自动开始桌面共享");
+                                }
                                 break;
 
                             case "c":

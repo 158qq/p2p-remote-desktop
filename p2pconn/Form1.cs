@@ -931,6 +931,7 @@ namespace p2pconn
             }
 
             int localPort = 9000;
+            GlobalVariables.IsP2PServer = true; // 监听方 = 服务端，自动共享桌面
             btnP2PListen.Enabled = false;
             btnP2PConnect.Enabled = false;
             lblP2PStatus.Text = "正在启动监听...";
@@ -1018,6 +1019,7 @@ namespace p2pconn
                 return;
             }
 
+            GlobalVariables.IsP2PServer = false; // 连接方 = 客户端，查看对端桌面
             btnP2PListen.Enabled = false;
             btnP2PConnect.Enabled = false;
             lblP2PStatus.Text = "正在连接...";
