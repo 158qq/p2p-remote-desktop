@@ -1,37 +1,54 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Drawing;
 using System.IO;
 using System.Management;
+using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Text;
 using System.Windows.Forms;
 using Microsoft.Win32;
+using UdtSharp;
+using p2pcopy;
 
 namespace p2pconn
 {
     public partial class Form1 : Form
     {
-        #region 控件声明
+        #region Tab 控件
         private TableLayoutPanel mainLayout;
         private TabControl tabControl;
         private TabPage tabConnect, tabAbout;
         private StatusStrip statusStrip;
         private ToolStripStatusLabel statusBarLabel;
-        private Timer statusTimer;
+        private System.Windows.Forms.Timer statusTimer;
         private DateTime startTime;
         private NotifyIcon notifyIcon;
         private bool allowRealClose = false;
+        #endregion
 
-        // Tab 1 - 连接
+        #region Tab 1 - 连接
         private GroupBox grpWebServer;
         private Panel pnlStatusDot;
         private Label lblStatusText, lblWebUrl, lblClientCount, lblLocalIp;
         private NumericUpDown nudPort;
         private Button btnStartStop, btnCopyUrl;
 
-        // Tab 2 - 关于
+        private GroupBox grpP2P;
+        private Label lblP2PStatus, lblPeerName;
+        private TextBox txtMyEndpoint, txtPeerAddress;
+        private Button btnP2PConnect, btnP2PDisconnect;
+        private System.Threading.Thread p2pThread = null;
+        private bool p2pConnected = false;
+
+        private TextBox txtPublicIp, txtPublicUrl;
+        private Label lblNatType;
+        private Button btnCopyIp, btnOpenUrl;
+        #endregion
+
+        #region Tab 2 - 关于
         private GroupBox grpAbout;
         private Label lblVersion, lblUptime;
         private GroupBox grpHardware;
@@ -44,14 +61,17 @@ namespace p2pconn
             startTime = DateTime.Now;
             BuildForm();
             AttachEvents();
+
+            // 自动启动服务器
+            StartServer();
         }
 
         private void BuildForm()
         {
             // === 窗口基本属性 ===
-            this.Text = "P2P Remote Desktop - 局域网版";
-            this.Size = new Size(550, 450);
-            this.MinimumSize = new Size(500, 400);
+            this.Text = "P2P Remote Desktop v1.0";
+            this.Size = new Size(620, 500);
+            this.MinimumSize = new Size(520, 420);
             this.StartPosition = FormStartPosition.CenterScreen;
 
             // 加载图标
@@ -141,18 +161,19 @@ namespace p2pconn
             var layout = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
-                RowCount = 1,
+                RowCount = 2,
                 ColumnCount = 1,
                 Padding = new Padding(0)
             };
             layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
             // --- Web 服务器分组 ---
             grpWebServer = new GroupBox
             {
-                Text = "Web 服务器 (局域网)",
+                Text = "Web 服务器",
                 Dock = DockStyle.Top,
-                Height = 280,
+                Height = 320,
                 Font = new Font("Microsoft YaHei", 9F, FontStyle.Bold)
             };
 
@@ -283,7 +304,272 @@ namespace p2pconn
             };
             grpWebServer.Controls.Add(lblLocalIp);
 
+            y += 70;
+
+            // --- 公网信息 (STUN) ---
+            var lblPubIpTitle = new Label
+            {
+                Location = new Point(leftCol, y),
+                Size = new Size(70, 20),
+                Text = "公网 IP:",
+                Font = new Font("Microsoft YaHei", 9F)
+            };
+            grpWebServer.Controls.Add(lblPubIpTitle);
+
+            txtPublicIp = new TextBox
+            {
+                Location = new Point(rightCol, y),
+                Size = new Size(260, 20),
+                Text = "检测中...",
+                ForeColor = Color.Gray,
+                Font = new Font("Microsoft YaHei", 9F, FontStyle.Bold),
+                ReadOnly = true,
+                BorderStyle = BorderStyle.None,
+                BackColor = SystemColors.Control
+            };
+            grpWebServer.Controls.Add(txtPublicIp);
+
+            y += 22;
+
+            var lblNatTitle = new Label
+            {
+                Location = new Point(leftCol, y),
+                Size = new Size(70, 20),
+                Text = "NAT 类型:",
+                Font = new Font("Microsoft YaHei", 9F)
+            };
+            grpWebServer.Controls.Add(lblNatTitle);
+
+            lblNatType = new Label
+            {
+                Location = new Point(rightCol, y),
+                Size = new Size(300, 20),
+                Text = "检测中...",
+                ForeColor = Color.Gray
+            };
+            grpWebServer.Controls.Add(lblNatType);
+
+            y += 22;
+
+            var lblPubUrlTitle = new Label
+            {
+                Location = new Point(leftCol, y),
+                Size = new Size(70, 20),
+                Text = "公网访问:",
+                Font = new Font("Microsoft YaHei", 9F)
+            };
+            grpWebServer.Controls.Add(lblPubUrlTitle);
+
+            txtPublicUrl = new TextBox
+            {
+                Location = new Point(rightCol, y),
+                Size = new Size(300, 20),
+                Text = "等待检测...",
+                ForeColor = Color.Gray,
+                ReadOnly = true,
+                BorderStyle = BorderStyle.None,
+                BackColor = SystemColors.Control
+            };
+            grpWebServer.Controls.Add(txtPublicUrl);
+
+            // "打开" 按钮
+            btnOpenUrl = new Button
+            {
+                Location = new Point(rightCol + 310, y - 2),
+                Size = new Size(50, 23),
+                Text = "打开",
+                Enabled = false,
+                FlatStyle = FlatStyle.System
+            };
+            btnOpenUrl.Click += (s, e) =>
+            {
+                try
+                {
+                    if (txtPublicUrl.Text.StartsWith("http"))
+                        System.Diagnostics.Process.Start(txtPublicUrl.Text);
+                }
+                catch { }
+            };
+            grpWebServer.Controls.Add(btnOpenUrl);
+
+            // "复制IP" 按钮
+            btnCopyIp = new Button
+            {
+                Location = new Point(rightCol + 270, txtPublicIp.Top - 2),
+                Size = new Size(50, 23),
+                Text = "复制",
+                Enabled = false,
+                FlatStyle = FlatStyle.System
+            };
+            btnCopyIp.Click += (s, e) =>
+            {
+                if (!string.IsNullOrEmpty(txtPublicIp.Text) && txtPublicIp.Text != "检测中..." && txtPublicIp.Text != "检测失败" && txtPublicIp.Text != "检测异常")
+                    Clipboard.SetText(txtPublicIp.Text);
+            };
+            grpWebServer.Controls.Add(btnCopyIp);
+
             layout.Controls.Add(grpWebServer, 0, 0);
+
+            // --- P2P 连接分组 ---
+            grpP2P = new GroupBox
+            {
+                Text = "P2P 连接",
+                Dock = DockStyle.Fill,
+                Font = new Font("Microsoft YaHei", 9F, FontStyle.Bold),
+                Margin = new Padding(0, 10, 0, 0)
+            };
+
+            int py = 28;
+            int pLeft = 16, pRight = 140;
+
+            // 本机端点
+            var lblMyEp = new Label
+            {
+                Location = new Point(pLeft, py + 3),
+                Size = new Size(70, 20),
+                Text = "本机端点:",
+                Font = new Font("Microsoft YaHei", 9F)
+            };
+            grpP2P.Controls.Add(lblMyEp);
+
+            txtMyEndpoint = new TextBox
+            {
+                Location = new Point(pRight, py),
+                Size = new Size(200, 20),
+                Text = "等待检测...",
+                ReadOnly = true,
+                BorderStyle = BorderStyle.None,
+                BackColor = SystemColors.Control,
+                Font = new Font("Microsoft YaHei", 9F, FontStyle.Bold)
+            };
+            grpP2P.Controls.Add(txtMyEndpoint);
+
+            var btnCopyEp = new Button
+            {
+                Location = new Point(pRight + 210, py - 2),
+                Size = new Size(50, 23),
+                Text = "复制",
+                FlatStyle = FlatStyle.System
+            };
+            btnCopyEp.Click += (s, e) =>
+            {
+                if (!string.IsNullOrEmpty(txtMyEndpoint.Text) && txtMyEndpoint.Text != "等待检测...")
+                    Clipboard.SetText(txtMyEndpoint.Text);
+            };
+            grpP2P.Controls.Add(btnCopyEp);
+
+            py += 30;
+
+            // 对端地址
+            var lblPeerAddr = new Label
+            {
+                Location = new Point(pLeft, py + 3),
+                Size = new Size(70, 20),
+                Text = "对端地址:",
+                Font = new Font("Microsoft YaHei", 9F)
+            };
+            grpP2P.Controls.Add(lblPeerAddr);
+
+            txtPeerAddress = new TextBox
+            {
+                Location = new Point(pRight, py),
+                Size = new Size(220, 20),
+                Text = "例: 113.108.x.x:9000",
+                ForeColor = Color.Gray,
+                Font = new Font("Microsoft YaHei", 9F)
+            };
+            txtPeerAddress.Enter += (s, e) =>
+            {
+                if (txtPeerAddress.Text == "例: 113.108.x.x:9000")
+                {
+                    txtPeerAddress.Text = "";
+                    txtPeerAddress.ForeColor = Color.Black;
+                }
+            };
+            txtPeerAddress.Leave += (s, e) =>
+            {
+                if (string.IsNullOrWhiteSpace(txtPeerAddress.Text))
+                {
+                    txtPeerAddress.Text = "例: 113.108.x.x:9000";
+                    txtPeerAddress.ForeColor = Color.Gray;
+                }
+            };
+            grpP2P.Controls.Add(txtPeerAddress);
+
+            py += 32;
+
+            // 连接/断开按钮
+            btnP2PConnect = new Button
+            {
+                Location = new Point(pLeft, py),
+                Size = new Size(100, 30),
+                Text = "发起连接",
+                BackColor = Color.FromArgb(33, 150, 243),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Microsoft YaHei", 9F, FontStyle.Bold)
+            };
+            btnP2PConnect.FlatAppearance.BorderSize = 0;
+            btnP2PConnect.Click += BtnP2PConnect_Click;
+            grpP2P.Controls.Add(btnP2PConnect);
+
+            btnP2PDisconnect = new Button
+            {
+                Location = new Point(pLeft + 110, py),
+                Size = new Size(100, 30),
+                Text = "断开连接",
+                Enabled = false,
+                FlatStyle = FlatStyle.System,
+                Font = new Font("Microsoft YaHei", 9F)
+            };
+            btnP2PDisconnect.Click += BtnP2PDisconnect_Click;
+            grpP2P.Controls.Add(btnP2PDisconnect);
+
+            py += 40;
+
+            // 连接状态
+            var lblStTitle = new Label
+            {
+                Location = new Point(pLeft, py + 3),
+                Size = new Size(70, 20),
+                Text = "连接状态:",
+                Font = new Font("Microsoft YaHei", 9F)
+            };
+            grpP2P.Controls.Add(lblStTitle);
+
+            lblP2PStatus = new Label
+            {
+                Location = new Point(pRight, py + 3),
+                Size = new Size(300, 20),
+                Text = "未连接",
+                ForeColor = Color.Gray
+            };
+            grpP2P.Controls.Add(lblP2PStatus);
+
+            py += 22;
+
+            // 对端名称
+            var lblPnTitle = new Label
+            {
+                Location = new Point(pLeft, py + 3),
+                Size = new Size(70, 20),
+                Text = "对端名称:",
+                Font = new Font("Microsoft YaHei", 9F)
+            };
+            grpP2P.Controls.Add(lblPnTitle);
+
+            lblPeerName = new Label
+            {
+                Location = new Point(pRight, py + 3),
+                Size = new Size(300, 20),
+                Text = "--",
+                ForeColor = Color.Gray
+            };
+            grpP2P.Controls.Add(lblPeerName);
+
+            layout.Controls.Add(grpWebServer, 0, 0);
+            layout.Controls.Add(grpP2P, 0, 1);
+
             tabConnect.Controls.Add(layout);
         }
         #endregion
@@ -318,7 +604,7 @@ namespace p2pconn
             {
                 Location = new Point(16, 24),
                 Size = new Size(300, 22),
-                Text = "P2P Remote Desktop Server v1.0 (局域网版)",
+                Text = "P2P Remote Desktop Server v1.0",
                 Font = new Font("Microsoft YaHei", 10F, FontStyle.Bold)
             };
             grpAbout.Controls.Add(appName);
@@ -402,7 +688,7 @@ namespace p2pconn
             btnRefreshHw.Click += BtnRefreshHw_Click;
 
             // 状态定时器
-            statusTimer = new Timer { Interval = 1000 };
+            statusTimer = new System.Windows.Forms.Timer { Interval = 1000 };
             statusTimer.Tick += StatusTimer_Tick;
             statusTimer.Start();
         }
@@ -419,6 +705,7 @@ namespace p2pconn
                 e.Cancel = true;
                 this.Hide();
                 notifyIcon.Visible = true;
+                //notifyIcon.ShowBalloonTip(2000, "P2P Remote Desktop", "程序已最小化到系统托盘", ToolTipIcon.Info);
             }
         }
 
@@ -505,6 +792,20 @@ namespace p2pconn
             lblUptime.Text = string.Format("运行时间: {0:D2}:{1:D2}:{2:D2}",
                 (int)uptime.TotalHours, uptime.Minutes, uptime.Seconds);
 
+            // 更新 P2P 状态
+            if (!string.IsNullOrEmpty(GlobalVariables.peername) && GlobalVariables.peername != "对方")
+            {
+                lblP2PStatus.Text = "已连接";
+                lblP2PStatus.ForeColor = Color.FromArgb(76, 175, 80);
+                lblPeerName.Text = GlobalVariables.peername;
+            }
+            else
+            {
+                lblP2PStatus.Text = "等待连接...";
+                lblP2PStatus.ForeColor = Color.Gray;
+                lblPeerName.Text = "--";
+            }
+
             // 状态栏
             if (WebSocketServer.IsRunning)
             {
@@ -524,8 +825,11 @@ namespace p2pconn
             int port = (int)nudPort.Value;
             try
             {
-                WebSocketServer.Start(port);
-                statusBarLabel.Text = "服务器已启动，端口: " + port;
+            WebSocketServer.Start(port);
+            statusBarLabel.Text = "服务器已启动，端口: " + port;
+
+            // 启动 STUN 公网检测
+            QueryStunInfo();
             }
             catch (Exception ex)
             {
@@ -537,6 +841,258 @@ namespace p2pconn
         {
             WebSocketServer.Stop();
             statusBarLabel.Text = "服务器已停止";
+        }
+
+        private void QueryStunInfo()
+        {
+            System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+            {
+                try
+                {
+                    // 加载 STUN 服务器列表
+                    string stunFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "StunServers.json");
+                    if (!File.Exists(stunFile))
+                        stunFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "StunServers.json");
+
+                    p2pcopy.StunResult result = null;
+                    string usedServer = "";
+                    string lastError = "";
+                    int dnsFailCount = 0;
+                    int timeoutCount = 0;
+
+                    // 尝试 STUN（如果配置文件存在）
+                    if (File.Exists(stunFile))
+                    {
+                        var servers = p2p.StunServer.StunServer.GetStunServersFromFile(stunFile);
+                        if (servers != null && servers.Length > 0)
+                        {
+                            foreach (var server in servers)
+                            {
+                                try
+                                {
+                                    using (Socket socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp))
+                                    {
+                                        socket.Bind(new IPEndPoint(IPAddress.Any, 0));
+                                        socket.ReceiveTimeout = 3000;
+                                        result = p2pcopy.StunClient.Query(server.Server, server.Port, socket);
+                                        usedServer = server.Server;
+                                        break;
+                                    }
+                                }
+                                catch (System.Net.Sockets.SocketException sex)
+                                {
+                                    lastError = sex.SocketErrorCode.ToString();
+                                    if (sex.SocketErrorCode == System.Net.Sockets.SocketError.HostNotFound ||
+                                        sex.SocketErrorCode == System.Net.Sockets.SocketError.TryAgain)
+                                        dnsFailCount++;
+                                    else
+                                        timeoutCount++;
+                                    continue;
+                                }
+                                catch (Exception ex)
+                                {
+                                    lastError = ex.Message;
+                                    timeoutCount++;
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+
+                    // STUN 成功 → 显示完整信息
+                    if (result != null && result.PublicEndPoint != null)
+                    {
+                        string publicIp = result.PublicEndPoint.Address.ToString();
+                        string natTypeName = GetNatTypeName(result.NetType);
+                        string publicUrl = "http://" + publicIp + ":" + nudPort.Value + "/";
+
+                        // 如果 STUN 返回 IPv6，尝试 HTTP 获取 IPv4
+                        bool isIpv6 = result.PublicEndPoint.Address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6;
+                        if (isIpv6)
+                        {
+                            string httpIp4 = TryGetPublicIpv4();
+                            if (!string.IsNullOrEmpty(httpIp4))
+                            {
+                                publicIp = httpIp4;
+                                publicUrl = "http://" + publicIp + ":" + nudPort.Value + "/";
+                                natTypeName += "（IPv6 穿透困难，已获取 IPv4）";
+                            }
+                        }
+
+                        this.BeginInvoke(new Action(() =>
+                        {
+                            txtPublicIp.Text = publicIp;
+                            txtPublicIp.ForeColor = Color.FromArgb(33, 150, 243);
+
+                            lblNatType.Text = natTypeName;
+                            lblNatType.ForeColor = GetNatTypeColor(result.NetType);
+
+                            txtPublicUrl.Text = publicUrl;
+                            txtPublicUrl.ForeColor = Color.Blue;
+                            txtPublicUrl.Font = new Font("Microsoft YaHei", 9F, FontStyle.Underline);
+
+                            btnCopyIp.Enabled = true;
+                            btnOpenUrl.Enabled = true;
+
+                            // 更新本机 P2P 端点（STUN 检测到的公网 IP:端口）
+                            int publicPort = result.PublicEndPoint.Port;
+                            txtMyEndpoint.Text = publicIp + ":" + publicPort;
+                            txtMyEndpoint.ForeColor = Color.FromArgb(33, 150, 243);
+
+                            statusBarLabel.Text = "公网检测完成: " + publicIp + "  (" + natTypeName + ")";
+                        }));
+                        return;
+                    }
+
+                    // === STUN 全部失败 → HTTP 备用检测 ===
+                    string httpIp = null;
+                    string httpIpv6 = null;   // 备用：找不到 IPv4 时暂存 IPv6
+                    string httpError = null;
+
+                    // 备选 API 列表（按优先级）
+                    string[] apis = {
+                        "https://api.ipify.org",
+                        "https://ifconfig.me/ip",
+                        "https://icanhazip.com",
+                        "http://ipinfo.io/ip"
+                    };
+
+                    foreach (string apiUrl in apis)
+                    {
+                        try
+                        {
+                            using (var wc = new System.Net.WebClient())
+                            {
+                                wc.Encoding = System.Text.Encoding.UTF8;
+                                wc.Headers.Add("User-Agent", "P2PRemoteDesktop/1.0");
+                                // 超时 5 秒
+                                string ipText = wc.DownloadString(apiUrl).Trim();
+                                // 验证是否是有效 IP 地址
+                                if (System.Net.IPAddress.TryParse(ipText, out System.Net.IPAddress parsedIp))
+                                {
+                                    // 跳过 IPv6，只接受 IPv4
+                                    if (parsedIp.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6)
+                                    {
+                                        httpIpv6 = ipText;  // 暂存，继续找 IPv4
+                                        continue;
+                                    }
+                                    httpIp = ipText;
+                                    break;
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            httpError = ex.Message;
+                            continue;
+                        }
+                    }
+
+                    // 如果没找到 IPv4，但有 IPv6，就用 IPv6（带警告）
+                    if (string.IsNullOrEmpty(httpIp) && !string.IsNullOrEmpty(httpIpv6))
+                    {
+                        httpIp = httpIpv6;
+                    }
+
+                    this.BeginInvoke(new Action(() =>
+                    {
+                        if (!string.IsNullOrEmpty(httpIp))
+                        {
+                            // 检查是否是 IPv6
+                            bool isIpv6 = false;
+                            if (System.Net.IPAddress.TryParse(httpIp, out var parsed))
+                                isIpv6 = parsed.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6;
+
+                            // HTTP 成功获取公网 IP（但无 NAT 类型）
+                            txtPublicIp.Text = httpIp;
+                            txtPublicIp.ForeColor = isIpv6 ? Color.DarkOrange : Color.FromArgb(76, 175, 80);
+
+                            lblNatType.Text = isIpv6
+                                ? "仅 IPv6 可用，P2P 穿透可能失败"
+                                : "UDP 可能被阻挡 (HTTP 检测)";
+                            lblNatType.ForeColor = isIpv6 ? Color.Red : Color.DarkOrange;
+
+                            string publicUrl = "http://" + httpIp + ":" + nudPort.Value + "/";
+                            txtPublicUrl.Text = publicUrl;
+                            txtPublicUrl.ForeColor = Color.Blue;
+                            txtPublicUrl.Font = new Font("Microsoft YaHei", 9F, FontStyle.Underline);
+
+                            btnCopyIp.Enabled = true;
+                            btnOpenUrl.Enabled = true;
+
+                            // HTTP 检测无法获取公网端口，使用默认 P2P 端口 9000
+                            txtMyEndpoint.Text = httpIp + ":9000";
+                            txtMyEndpoint.ForeColor = isIpv6 ? Color.DarkOrange : Color.FromArgb(76, 175, 80);
+
+                            statusBarLabel.Text = isIpv6
+                                ? "公网 IP (IPv6): " + httpIp + " — 建议在有 IPv4 的网络使用 P2P"
+                                : "公网 IP (HTTP): " + httpIp + "  —  STUN/UDP 未响应，需端口转发或内网穿透";
+                        }
+                        else
+                        {
+                            // 完全失败
+                            string reason = "所有检测均失败";
+                            if (dnsFailCount > 0) reason = "DNS 解析失败 (" + dnsFailCount + "个服务器)";
+                            else if (timeoutCount > 0) reason = "UDP 无响应 (" + timeoutCount + "次超时)，可能被防火墙拦截";
+                            else if (!string.IsNullOrEmpty(lastError)) reason = "STUN 错误: " + lastError;
+                            else if (!string.IsNullOrEmpty(httpError)) reason = "HTTP 也不可达: " + httpError;
+
+                            txtPublicIp.Text = "检测失败";
+                            txtPublicIp.ForeColor = Color.Red;
+                            lblNatType.Text = reason;
+                            lblNatType.ForeColor = Color.Gray;
+                            txtPublicUrl.Text = "当前仅支持局域网访问";
+
+                            statusBarLabel.Text = "无法获取公网信息 — " + reason;
+                        }
+                    }));
+                }
+                catch (Exception ex)
+                {
+                    this.BeginInvoke(new Action(() =>
+                    {
+                        txtPublicIp.Text = "检测异常";
+                        txtPublicIp.ForeColor = Color.Red;
+                        lblNatType.Text = ex.Message;
+                        lblNatType.ForeColor = Color.Gray;
+                        txtPublicUrl.Text = "--";
+                        statusBarLabel.Text = "公网检测异常: " + ex.Message;
+                    }));
+                }
+            });
+        }
+
+        private string GetNatTypeName(p2pcopy.StunNetType netType)
+        {
+            switch (netType)
+            {
+                case p2pcopy.StunNetType.OpenInternet: return "公网直连 (无 NAT)";
+                case p2pcopy.StunNetType.FullCone: return "完全锥形 NAT";
+                case p2pcopy.StunNetType.RestrictedCone: return "受限锥形 NAT";
+                case p2pcopy.StunNetType.PortRestrictedCone: return "端口受限锥形 NAT";
+                case p2pcopy.StunNetType.Symmetric: return "对称 NAT (需中继)";
+                case p2pcopy.StunNetType.SymmetricUdpFirewall: return "对称 UDP 防火墙";
+                case p2pcopy.StunNetType.UdpBlocked: return "UDP 被阻断";
+                default: return "未知";
+            }
+        }
+
+        private Color GetNatTypeColor(p2pcopy.StunNetType netType)
+        {
+            switch (netType)
+            {
+                case p2pcopy.StunNetType.OpenInternet:
+                case p2pcopy.StunNetType.FullCone:
+                    return Color.FromArgb(76, 175, 80); // 绿色 — 穿透友好
+                case p2pcopy.StunNetType.RestrictedCone:
+                case p2pcopy.StunNetType.PortRestrictedCone:
+                    return Color.FromArgb(255, 152, 0); // 橙色 — 需要 hole punching
+                case p2pcopy.StunNetType.Symmetric:
+                case p2pcopy.StunNetType.UdpBlocked:
+                    return Color.Red; // 红色 — 需中继
+                default:
+                    return Color.Gray;
+            }
         }
         #endregion
 
@@ -555,6 +1111,7 @@ namespace p2pconn
             sb.AppendLine("  进程架构   : " + (Environment.Is64BitProcess ? "x64" : "x86"));
             sb.AppendLine("  主机名     : " + Environment.MachineName);
             sb.AppendLine("  用户名     : " + Environment.UserName);
+            sb.AppendLine("  系统目录   : " + Environment.SystemDirectory);
             sb.AppendLine();
 
             // --- CPU ---
@@ -592,8 +1149,10 @@ namespace p2pconn
                     {
                         ulong totalKB = Convert.ToUInt64(obj["TotalVisibleMemorySize"]);
                         ulong freeKB = Convert.ToUInt64(obj["FreePhysicalMemory"]);
-                        sb.AppendLine("  总内存     : " + totalKB / 1024 + " MB (" + totalKB / 1024 / 1024 + " GB)");
-                        sb.AppendLine("  已用       : " + (totalKB - freeKB) / 1024 + " MB (" + (totalKB - freeKB) / 1024 / 1024 + " GB)");
+                        ulong totalGB = totalKB / 1024 / 1024;
+                        ulong usedGB = (totalKB - freeKB) / 1024 / 1024;
+                        sb.AppendLine("  总内存     : " + totalKB / 1024 + " MB (" + totalGB + " GB)");
+                        sb.AppendLine("  已用       : " + (totalKB - freeKB) / 1024 + " MB (" + usedGB + " GB)");
                         sb.AppendLine("  可用       : " + freeKB / 1024 + " MB (" + (freeKB / 1024 / 1024) + " GB)");
                         break;
                     }
@@ -626,6 +1185,10 @@ namespace p2pconn
                         if (obj["DriverVersion"] != null)
                         {
                             sb.AppendLine("    驱动版本 : " + obj["DriverVersion"]);
+                        }
+                        if (obj["VideoProcessor"] != null)
+                        {
+                            sb.AppendLine("    视频处理器: " + obj["VideoProcessor"]);
                         }
                         sb.AppendLine();
                     }
@@ -771,6 +1334,192 @@ namespace p2pconn
             catch { }
 
             return ips.Count > 0 ? string.Join(", ", ips) : "未检测到";
+        }
+        #endregion
+
+        #region P2P 连接
+        private void BtnP2PConnect_Click(object sender, EventArgs e)
+        {
+            if (p2pConnected)
+            {
+                MessageBox.Show("已连接，请先断开", "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            string peerAddr = txtPeerAddress.Text.Trim();
+            if (string.IsNullOrEmpty(peerAddr))
+            {
+                MessageBox.Show("请输入对端地址（格式：IP:端口）", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            // 解析对端地址
+            string[] parts = peerAddr.Split(':');
+            if (parts.Length != 2 || !int.TryParse(parts[1], out int peerPort) || peerPort < 1 || peerPort > 65535)
+            {
+                MessageBox.Show("地址格式错误，请使用 IP:端口 格式（例：113.108.20.30:9000）", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (!System.Net.IPAddress.TryParse(parts[0], out System.Net.IPAddress peerIp))
+            {
+                MessageBox.Show("IP 地址格式错误", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            int localP2PPort = 9000; // P2P 本地端口（可配置）
+
+            btnP2PConnect.Enabled = false;
+            lblP2PStatus.Text = "正在连接...";
+            lblP2PStatus.ForeColor = Color.Orange;
+            statusBarLabel.Text = "P2P: 正在连接 " + peerAddr;
+
+            // 后台线程发起 UDT Rendezvous 连接
+            p2pThread = new System.Threading.Thread(() =>
+            {
+                try
+                {
+                    // 创建 UDT socket
+                    var socket = new UdtSharp.UdtSocket(AddressFamily.InterNetwork, SocketType.Dgram);
+
+                    // 绑定本地 UDP 端口
+                    var localEp = new IPEndPoint(System.Net.IPAddress.Any, localP2PPort);
+                    socket.Bind(localEp);
+
+                    // 开启 Rendezvous 模式（NAT 穿透）
+                    socket.SetSocketOption(UdtSharp.UDTOpt.UDT_RENDEZVOUS, true);
+
+                    // 连接到对端
+                    var peerEp = new IPEndPoint(peerIp, peerPort);
+                    socket.Connect(peerEp);
+
+                    // 等待连接建立（UDT Connect 是同步的，会阻塞直到连接或超时）
+                    // 检查连接状态
+                    bool connected = false;
+                    for (int i = 0; i < 50; i++) // 最多等 5 秒
+                    {
+                        if (socket.IsConnected())
+                        {
+                            connected = true;
+                            break;
+                        }
+                        System.Threading.Thread.Sleep(100);
+                    }
+
+                    if (!connected)
+                    {
+                        socket.Close();
+                        this.BeginInvoke(new Action(() =>
+                        {
+                            lblP2PStatus.Text = "连接超时";
+                            lblP2PStatus.ForeColor = Color.Red;
+                            btnP2PConnect.Enabled = true;
+                            btnP2PDisconnect.Enabled = false;
+                            statusBarLabel.Text = "P2P: 连接超时";
+                        }));
+                        return;
+                    }
+
+                    // 连接成功
+                    p2pConnected = true;
+                    SenderReceiver.isConnected = true;
+                    SenderReceiver.client = socket;
+
+                    this.BeginInvoke(new Action(() =>
+                    {
+                        lblP2PStatus.Text = "已连接 ✓";
+                        lblP2PStatus.ForeColor = Color.LimeGreen;
+                        btnP2PConnect.Enabled = false;
+                        btnP2PDisconnect.Enabled = true;
+                        statusBarLabel.Text = "P2P: 已连接到 " + peerAddr;
+                    }));
+
+                    // 启动数据接收循环（在后台线程）
+                    SenderReceiver.Run(socket);
+                }
+                catch (Exception ex)
+                {
+                    this.BeginInvoke(new Action(() =>
+                    {
+                        lblP2PStatus.Text = "连接失败: " + ex.Message;
+                        lblP2PStatus.ForeColor = Color.Red;
+                        btnP2PConnect.Enabled = true;
+                        btnP2PDisconnect.Enabled = false;
+                        statusBarLabel.Text = "P2P: 连接失败";
+                    }));
+                }
+            });
+            p2pThread.IsBackground = true;
+            p2pThread.Start();
+        }
+
+        private void BtnP2PDisconnect_Click(object sender, EventArgs e)
+        {
+            DisconnectP2P();
+        }
+
+        private void DisconnectP2P()
+        {
+            try
+            {
+                SenderReceiver.isConnected = false;
+                if (SenderReceiver.client != null)
+                {
+                    try { SenderReceiver.client.Close(); } catch { }
+                    SenderReceiver.client = null;
+                }
+                p2pConnected = false;
+
+                this.BeginInvoke(new Action(() =>
+                {
+                    lblP2PStatus.Text = "已断开";
+                    lblP2PStatus.ForeColor = Color.Gray;
+                    lblPeerName.Text = "--";
+                    btnP2PConnect.Enabled = true;
+                    btnP2PDisconnect.Enabled = false;
+                    statusBarLabel.Text = "P2P: 已断开";
+                }));
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("断开 P2P 连接错误: " + ex.Message);
+            }
+        }
+        #endregion
+
+        #region 辅助方法
+        /// <summary>
+        /// 通过 HTTP API 获取公网 IPv4 地址（跳过 IPv6）
+        /// </summary>
+        private string TryGetPublicIpv4()
+        {
+            string[] apis = {
+                "https://api.ipify.org",
+                "https://ifconfig.me/ip",
+                "https://icanhazip.com",
+                "http://ipinfo.io/ip"
+            };
+
+            foreach (string apiUrl in apis)
+            {
+                try
+                {
+                    using (var wc = new System.Net.WebClient())
+                    {
+                        wc.Encoding = System.Text.Encoding.UTF8;
+                        wc.Headers.Add("User-Agent", "P2PRemoteDesktop/1.0");
+                        string ipText = wc.DownloadString(apiUrl).Trim();
+                        if (System.Net.IPAddress.TryParse(ipText, out System.Net.IPAddress parsedIp))
+                        {
+                            // 只接受 IPv4
+                            if (parsedIp.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+                                return ipText;
+                        }
+                    }
+                }
+                catch { continue; }
+            }
+            return null;
         }
         #endregion
     }
