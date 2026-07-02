@@ -113,7 +113,6 @@
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="StreamingDesktop\QuickLZ.cs" />
-    <Compile Include="SenderReceiver.cs" />
     <Compile Include="StreamingDesktop\RemoteDesktop.cs" />
     <Compile Include="StreamingLibrary\Enums.cs" />
     <Compile Include="StreamingLibrary\IUnsafeCodec.cs" />
