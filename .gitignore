@@ -1,0 +1,34 @@
+.DS_Store
+.git
+.vs
+bin
+obj
+packages
+*.user
+*.suo
+*.ncb
+*.aps
+*.pdb
+*.idb
+*.tlb
+*.tlh
+*.tl i
+*.obj
+*.pch
+*.res
+*.sbr
+*.ncb
+*.log
+*.build
+*.dotCover
+.DotNetCorePlugins
+_Netst andardProjectOutput
+*.vspscc
+.vssscc
+.vsosteam
+.node_modules
+.nuget
+*\packages*
+*\bin*
+*\obj*
+.workbuddy/
