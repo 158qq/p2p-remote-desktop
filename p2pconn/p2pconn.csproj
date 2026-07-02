@@ -122,31 +122,10 @@
     <Compile Include="StreamingLibrary\LzwCompression.cs" />
     <Compile Include="StreamingLibrary\NativeMethods.cs" />
     <Compile Include="StreamingLibrary\UnsafeStreamCodec.cs" />
-    <Compile Include="StunClientEndPoint\StunClient.cs" />
-    <Compile Include="StreamingDesktop\Win32Stuff.cs" />
     <Compile Include="StreamingDesktop\IVideoSource.cs" />
     <Compile Include="StreamingDesktop\ScreenCaptureStream.cs" />
     <Compile Include="StreamingDesktop\VideoEvents.cs" />
-    <Compile Include="StunServer\StunServer.cs" />
-    <Compile Include="UdtSharpLib\AckNumber.cs" />
-    <Compile Include="UdtSharpLib\Buffer.cs" />
-    <Compile Include="UdtSharpLib\Channel.cs" />
-    <Compile Include="UdtSharpLib\CongestionControl.cs" />
-    <Compile Include="UdtSharpLib\CongestionControlFactory.cs" />
-    <Compile Include="UdtSharpLib\Core.cs" />
-    <Compile Include="UdtSharpLib\InfoBlock.cs" />
-    <Compile Include="UdtSharpLib\LossList.cs" />
-    <Compile Include="UdtSharpLib\MessageNumber.cs" />
-    <Compile Include="UdtSharpLib\Packet.cs" />
-    <Compile Include="UdtSharpLib\Queue.cs" />
-    <Compile Include="UdtSharpLib\SequenceNumber.cs" />
-    <Compile Include="UdtSharpLib\Timer.cs" />
-    <Compile Include="UdtSharpLib\UdtException.cs" />
-    <Compile Include="UdtSharpLib\UdtNetworkStream.cs" />
-    <Compile Include="UdtSharpLib\UdtSocket.cs" />
-    <Compile Include="UdtSharpLib\UdtUnited.cs" />
-    <Compile Include="UdtSharpLib\Utilities.cs" />
-    <Compile Include="UdtSharpLib\Window.cs" />
+    <Compile Include="StreamingDesktop\Win32Stuff.cs" />
     <None Include="app.config" />
     <None Include="app.manifest">
       <SubType>Designer</SubType>
@@ -161,7 +140,6 @@
       <DependentUpon>Settings.settings</DependentUpon>
       <DesignTimeSharedInput>True</DesignTimeSharedInput>
     </Compile>
-    <None Include="Resources\StunServers.json" />
   </ItemGroup>
   <ItemGroup>
     <None Include="Resources\Icons.ico" />
